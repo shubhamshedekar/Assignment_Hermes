@@ -13,7 +13,7 @@ from groq import Groq
 st.set_page_config(page_title="Document Validator", layout="wide")
 
 # Load Groq client (USE SECRETS)
-client = Groq(api_key=st.secrets["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"])
+client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 ocr = PaddleOCR(use_angle_cls=True, lang="en")
 
