@@ -18,7 +18,12 @@ client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 # Add this instead:
 @st.cache_resource
 def load_ocr():
-    return PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
+    return PaddleOCR(
+        use_angle_cls=True,
+        lang="en",
+        use_onnx=True,        # avoids paddle model format crash
+        show_log=False
+    )
 
 
 # -----------------------------
