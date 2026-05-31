@@ -18,12 +18,19 @@ client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 # Add this instead:
 @st.cache_resource
 def load_ocr():
-    return PaddleOCR(
+    from paddleocr import PaddleOCR
+    # Initialize once — this triggers model download and caches it
+    ocr = PaddleOCR(
         use_angle_cls=True,
         lang="en",
-        use_onnx=True,        # avoids paddle model format crash
-        show_log=False
+        show_log=False,
+        use_gpu=False,
+        # explicitly point to writable model dirs
+        det_model_dir="/home/appuser/.paddleocr/whl/det/en/en_PP-OCRv3_det_infer",
+        rec_model_dir="/home/appuser/.paddleocr/whl/rec/en/en_PP-OCRv4_rec_infer",
+        cls_model_dir="/home/appuser/.paddleocr/whl/cls/ch_ppocr_mobile_v2.0_cls_infer",
     )
+    return ocr
 
 
 # -----------------------------
