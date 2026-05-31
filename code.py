@@ -20,45 +20,41 @@ ocr = PaddleOCR(use_angle_cls=True, lang="en")
 # PDF -> IMAGE
 # -----------------------------
 def convert_pdf_to_image(pdf_file):
-  try:
-    doc = fitz.open(pdf_file)
-    page = doc[0]  # First page
+    try:
+        doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
+        page = doc[0]
 
-    pix = page.get_pixmap(dpi=300)
+        pix = page.get_pixmap(dpi=300)
 
-    img = Image.frombytes(
-        "RGB",
-        [pix.width, pix.height],
-        pix.samples
-    )
-    return img
-  except Exception as e:
-    print(f"Error converting PDF to image: {e}")
-    return None
+        img = Image.frombytes(
+            "RGB",
+            [pix.width, pix.height],
+            pix.samples
+        )
+        return img
+    except Exception as e:
+        st.error(f"PDF conversion error: {e}")
+        return None
 
 
 # -----------------------------
 # IMAGE -> TEXT
 # -----------------------------
 def img_to_text(img):
-  try:
-    img_np = np.array(img)
-    result = ocr.ocr(img_np)
+    try:
+        img_np = np.array(img)
+        result = ocr.ocr(img_np)
 
-    all_text = []
+        all_text = []
+        for block in result:
+            for line in block:
+                all_text.append(line[1][0])
 
-    for block in result:
-        for line in block:
-            text = line[1][0]
-            all_text.append(text)
+        return " ".join(all_text)
 
-    # Join into one string
-    final_text = " ".join(all_text)
-
-    return final_text
-  except Exception as e:
-    print(f"Error converting image to text: {e}")
-    return None
+    except Exception as e:
+        st.error(f"OCR error: {e}")
+        return None
 
 
 # -----------------------------
@@ -116,108 +112,139 @@ def key_extraction_prompt(OCR):
     return None
 
 
+
 # -----------------------------
-# VALIDATION
+# VALIDATION (UPDATED LOGIC)
 # -----------------------------
+
 def validation_report(invoice_json, packing_list_json):
-  try:
-    prompt = f"""
-    You are an expert Trade Document Validation Assistant.
-
-    Your task is to compare the Invoice JSON and Packing List JSON and generate a structured validation report.
-
-    Comparison Rules:
-
-    1. Compare the following fields:
-      - Shipper
-      - Consignee
-      - Product_Description
-      - Quantity
-      - Gross_Weight
-      - Net_Weight
-      - Packages
-      - Invoice_Value
-
-    2. Consider minor formatting differences as MATCH:
-      Examples:
-      - "Ltd" vs "Ltd."
-      - "S/A" vs "S.A"
-      - Extra spaces
-      - Uppercase/lowercase differences
-      - Units attached to numbers
-        Example:
-          "200.000 KGS" == "200.00"
-          "233.770 KGS" == "233.77"
-          "8 HDPE Drums" ~= "8"
-
-    3. For Product Description:
-      - If one description contains the other and clearly refers to the same product,
-        mark as MATCH.
-      - Example:
-          "MF Active Pharmaceutical Ingredients - Vildagliptin"
-          and
-          "Vildagliptin"
-          should be considered MATCH.
-
-    4. For numeric fields:
-      - Compare numeric values after removing units.
-      - Allow insignificant decimal formatting differences.
-
-    5. Empty values:
-      - If one document contains a value and the other is empty,
-        mark as MISMATCH.
-
-    6. Determine:
-      - field status (MATCH / MISMATCH)
-      - overall_status (PASS / FAIL)
-
-    Return ONLY valid JSON in the following format:
-
-    {{
-      "overall_status": "PASS or FAIL",
-      "matched_fields": <number>,
-      "mismatched_fields": <number>,
-      "field_validation": [
+    try:
+        prompt = f"""
+        You are an expert Trade Document Validation Assistant.
+        
+        Your task is to compare the Invoice JSON and Packing List JSON and generate a structured validation report.
+        
+        ========================
+        IMPORTANT RULE (STRICT)
+        ========================
+        
+        You MUST:
+        - Identify each field as MATCH or MISMATCH
+        - DO NOT return counts
+        - DO NOT summarize numbers
+        
+        Instead:
+        - "matched_fields" = list of field names that MATCH
+        - "mismatched_fields" = list of field names that MISMATCH
+        
+        Each field must appear in exactly one list.
+        
+        No duplicates allowed.
+        
+        ========================
+        COMPARISON RULES (FIELD-WISE STRICT)
+        ========================
+        
+        1. Shipper
+        - Ignore punctuation differences (Ltd vs Ltd.)
+        - Ignore case differences
+        - Must match company name meaningfully
+        - If core name differs → MISMATCH
+        
+        2. Consignee
+        - Ignore punctuation (S/A vs S.A)
+        - Ignore spacing and case differences
+        - Must refer to same organization
+        - If country/company root differs → MISMATCH
+        
+        3. Product_Description
+        - MATCH if one contains the other AND refers to same product
+        - Ignore prefixes like "MF Active Pharmaceutical Ingredients"
+        - Focus on core product name
+        
+        4. Quantity
+        - Remove units
+        - Compare numeric values only
+        - Allow minor decimal differences
+        
+        5. Gross_Weight
+        - Compare numeric values only after removing units
+        
+        6. Net_Weight
+        - Same rule as Gross_Weight
+        
+        7. Packages
+        - Extract number only (e.g., "8 HDPE Drums" → 8)
+        - Ignore text differences
+        
+        8. Invoice_Value
+        - Remove formatting differences (commas, decimals if equal numerically)
+        - Empty vs non-empty → MISMATCH
+        
+        ========================
+        OUTPUT RULE (VERY IMPORTANT)
+        ========================
+        
+        Return ONLY valid JSON.
+        
+        Rules:
+        - First evaluate all fields
+        - Then place field names into correct arrays
+        - DO NOT output counts
+        - DO NOT output numbers
+        - DO NOT include explanations outside JSON structure
+        
+        ========================
+        OUTPUT FORMAT
+        ========================
+        
         {{
-          "field": "",
-          "invoice_value": "",
-          "packing_list_value": "",
-          "status": "MATCH or MISMATCH",
-          "reason": ""
+          "overall_status": "PASS or FAIL",
+          "matched_fields": [],
+          "mismatched_fields": [],
+          "field_validation": [
+            {{
+              "field": "",
+              "invoice_value": "",
+              "packing_list_value": "",
+              "status": "MATCH or MISMATCH",
+              "reason": ""
+            }}
+          ],
+          "summary": "Write One line summary about missmatch and match"
         }}
-      ],
-      "summary": ""
-    }}
+        
+        ========================
+        INPUT
+        ========================
+        
+        Invoice JSON:
+        {invoice_json}
+        
+        Packing List JSON:
+        {packing_list_json}
+        """
 
-    Invoice JSON:
-    {invoice_json}
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0,
+            response_format={"type": "json_object"}
+        )
 
-    Packing List JSON:
-    {packing_list_json}
-    """
+        result = response.choices[0].message.content
+        final_report = json.loads(result)
 
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        # model="llama-3.1-8b-instant",
-        messages=[
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0,
-        response_format={"type": "json_object"}
-    )
+        return final_report
 
-    result = response.choices[0].message.content
+    except Exception as e:
+        print(f"Error generating validation report: {e}")
+        return None
 
-    final_report = json.loads(result)
-
-    return final_report
-  except Exception as e:
-    print(f"Error generating validation report: {e}")
-    return None
-  
-  
 # -----------------------------
-# STREAMLIT UI
+# STREAMLIT UI (UNCHANGED)
 # -----------------------------
 st.title("📄 Trade Document Validator (Invoice vs Packing List)")
 st.write("Upload two PDFs and get validation report")
@@ -243,54 +270,72 @@ if st.button("Run Validation"):
             invoice_json = key_extraction_prompt(invoice_text)
             packing_json = key_extraction_prompt(packing_text)
 
-        with st.expander("📦 Invoice JSON"):
-            st.json(invoice_json)
-
-        with st.expander("📦 Packing List JSON"):
-            st.json(packing_json)
+        st.expander("📦 Invoice JSON").write(invoice_json)
+        st.expander("📦 Packing JSON").write(packing_json)
 
         with st.spinner("Validating documents..."):
             report = validation_report(invoice_json, packing_json)
 
         st.success("Validation Complete")
 
+        if not report:
+            st.error("No report generated")
+            st.stop()
+
+        # -----------------------------
+        # SAFE LIST HANDLING
+        # -----------------------------
+        matched_fields = report.get("matched_fields", [])
+        mismatched_fields = report.get("mismatched_fields", [])
+
         # -----------------------------
         # SUMMARY
         # -----------------------------
         st.subheader("📊 Summary")
-        st.write(report["summary"])
-
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Status", report["overall_status"])
-        col2.metric("Matched", report["matched_fields"])
-        col3.metric("Mismatched", report["mismatched_fields"])
+        st.write(report.get("summary", ""))
 
         # -----------------------------
-        # FIELD VALIDATION (COLOR UI)
+        # METRICS (UPDATED)
+        # -----------------------------
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Status", report.get("overall_status", "N/A"))
+        col2.metric("Matched Fields", len(matched_fields))
+        col3.metric("Mismatched Fields", len(mismatched_fields))
+
+        # -----------------------------
+        # LIST VIEW
+        # -----------------------------
+        st.subheader("✅ Matched Fields")
+        st.write(matched_fields)
+
+        st.subheader("❌ Mismatched Fields")
+        st.write(mismatched_fields)
+
+        # -----------------------------
+        # FIELD VALIDATION
         # -----------------------------
         st.subheader("🔍 Field-wise Validation")
 
-        for item in report["field_validation"]:
-            if item["status"] == "MATCH":
-                st.success(f"🟢 ✔ {item['field']}")
-            else:
-                st.error(f"🔴 ✖ {item['field']}")
+        for item in report.get("field_validation", []):
 
-            st.write("Invoice:", item["invoice_value"])
-            st.write("Packing:", item["packing_list_value"])
-            st.write("Reason:", item["reason"])
+            if item.get("status") == "MATCH":
+                st.success(f"🟢 {item.get('field')}")
+            else:
+                st.error(f"🔴 {item.get('field')}")
+
+            st.write("Invoice:", item.get("invoice_value"))
+            st.write("Packing:", item.get("packing_list_value"))
+            st.write("Reason:", item.get("reason"))
             st.divider()
 
         # -----------------------------
-        # DOWNLOAD JSON REPORT
+        # DOWNLOAD REPORT
         # -----------------------------
         st.subheader("⬇ Download Report")
 
-        json_data = json.dumps(report, indent=4)
-
         st.download_button(
             label="Download JSON Report",
-            data=json_data,
+            data=json.dumps(report, indent=4),
             file_name="validation_report.json",
             mime="application/json"
         )
