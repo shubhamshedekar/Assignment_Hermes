@@ -1,0 +1,14 @@
+# Core data processing
+pandas
+numpy==1.26.4
+
+# Image + PDF handling
+pillow
+pymupdf
+
+# OCR stack (IMPORTANT: version locked for compatibility)
+paddleocr==2.7.3
+paddlepaddle==2.6.2
+
+# LLM API
+groq
