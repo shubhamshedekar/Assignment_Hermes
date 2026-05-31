@@ -12,107 +12,210 @@ from groq import Groq
 # -----------------------------
 st.set_page_config(page_title="Document Validator", layout="wide")
 
-# Load Groq client (USE SECRETS)
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-
 ocr = PaddleOCR(use_angle_cls=True, lang="en")
 
 
 # -----------------------------
 # PDF -> IMAGE
 # -----------------------------
-def convert_pdf_to_image(file):
-    doc = fitz.open(stream=file.read(), filetype="pdf")
-    page = doc[0]
+def convert_pdf_to_image(pdf_file):
+  try:
+    doc = fitz.open(pdf_file)
+    page = doc[0]  # First page
+
     pix = page.get_pixmap(dpi=300)
 
-    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+    img = Image.frombytes(
+        "RGB",
+        [pix.width, pix.height],
+        pix.samples
+    )
     return img
+  except Exception as e:
+    print(f"Error converting PDF to image: {e}")
+    return None
 
 
 # -----------------------------
 # IMAGE -> TEXT
 # -----------------------------
 def img_to_text(img):
+  try:
     img_np = np.array(img)
     result = ocr.ocr(img_np)
 
     all_text = []
+
     for block in result:
         for line in block:
-            all_text.append(line[1][0])
+            text = line[1][0]
+            all_text.append(text)
 
-    return " ".join(all_text)
+    # Join into one string
+    final_text = " ".join(all_text)
+
+    return final_text
+  except Exception as e:
+    print(f"Error converting image to text: {e}")
+    return None
 
 
 # -----------------------------
 # GROQ EXTRACTION
 # -----------------------------
-def key_extraction_prompt(text):
-    prompt = f"""
-    Extract structured data from OCR text.
+def key_extraction_prompt(OCR):
+  try:
+    key_extraction_prompt = f"""
+    You are an expert document information extraction system.
 
-    Return ONLY valid JSON with keys:
-    Shipper, Consignee, Product_Description, Quantity,
-    Gross_Weight, Net_Weight, Packages, Invoice_Value
+    Extract the following fields from the document:
 
-    If missing -> "".
+    - Shipper
+    - Consignee
+    - Product_Description
+    - Quantity
+    - Gross_Weight
+    - Net_Weight
+    - Packages
+    - Invoice_Value
 
-    OCR TEXT:
-    {text}
+    Rules:
+    1. Return ONLY valid JSON.
+    2. Use exactly these keys:
+      "Shipper"
+      "Consignee"
+      "Product_Description"
+      "Quantity"
+      "Gross_Weight"
+      "Net_Weight"
+      "Packages"
+      "Invoice_Value"
+    3. If a value is not found, return an empty string "".
+    4. Do not add explanations, markdown, or extra text.
+    5. Extract the most relevant value even if labels vary slightly.
+
+    Document OCR Text:
+    {OCR}
     """
-
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
+        messages=[
+            {"role": "user", "content": key_extraction_prompt}
+        ],
         temperature=0,
         response_format={"type": "json_object"}
     )
 
-    return json.loads(response.choices[0].message.content)
+    result = response.choices[0].message.content
+
+    jsn = json.loads(result)
+    return jsn
+  except Exception as e:
+    print(f"Error extracting keys: {e}")
+    return None
 
 
 # -----------------------------
 # VALIDATION
 # -----------------------------
-def validation_report(invoice_json, packing_json):
+def validation_report(invoice_json, packing_list_json):
+  try:
     prompt = f"""
-    Compare Invoice vs Packing List JSON.
+    You are an expert Trade Document Validation Assistant.
 
-    Return JSON:
+    Your task is to compare the Invoice JSON and Packing List JSON and generate a structured validation report.
+
+    Comparison Rules:
+
+    1. Compare the following fields:
+      - Shipper
+      - Consignee
+      - Product_Description
+      - Quantity
+      - Gross_Weight
+      - Net_Weight
+      - Packages
+      - Invoice_Value
+
+    2. Consider minor formatting differences as MATCH:
+      Examples:
+      - "Ltd" vs "Ltd."
+      - "S/A" vs "S.A"
+      - Extra spaces
+      - Uppercase/lowercase differences
+      - Units attached to numbers
+        Example:
+          "200.000 KGS" == "200.00"
+          "233.770 KGS" == "233.77"
+          "8 HDPE Drums" ~= "8"
+
+    3. For Product Description:
+      - If one description contains the other and clearly refers to the same product,
+        mark as MATCH.
+      - Example:
+          "MF Active Pharmaceutical Ingredients - Vildagliptin"
+          and
+          "Vildagliptin"
+          should be considered MATCH.
+
+    4. For numeric fields:
+      - Compare numeric values after removing units.
+      - Allow insignificant decimal formatting differences.
+
+    5. Empty values:
+      - If one document contains a value and the other is empty,
+        mark as MISMATCH.
+
+    6. Determine:
+      - field status (MATCH / MISMATCH)
+      - overall_status (PASS / FAIL)
+
+    Return ONLY valid JSON in the following format:
+
     {{
-      "overall_status": "",
-      "matched_fields": 0,
-      "mismatched_fields": 0,
+      "overall_status": "PASS or FAIL",
+      "matched_fields": <number>,
+      "mismatched_fields": <number>,
       "field_validation": [
         {{
           "field": "",
           "invoice_value": "",
           "packing_list_value": "",
-          "status": "",
+          "status": "MATCH or MISMATCH",
           "reason": ""
         }}
       ],
       "summary": ""
     }}
 
-    Invoice:
+    Invoice JSON:
     {invoice_json}
 
-    Packing:
-    {packing_json}
+    Packing List JSON:
+    {packing_list_json}
     """
 
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
+        # model="llama-3.1-8b-instant",
+        messages=[
+            {"role": "user", "content": prompt}
+        ],
         temperature=0,
         response_format={"type": "json_object"}
     )
 
-    return json.loads(response.choices[0].message.content)
+    result = response.choices[0].message.content
 
+    final_report = json.loads(result)
 
+    return final_report
+  except Exception as e:
+    print(f"Error generating validation report: {e}")
+    return None
+  
+  
 # -----------------------------
 # STREAMLIT UI
 # -----------------------------
@@ -126,6 +229,7 @@ if st.button("Run Validation"):
 
     if not invoice_file or not packing_file:
         st.error("Please upload both files")
+
     else:
         with st.spinner("Processing PDFs..."):
             invoice_img = convert_pdf_to_image(invoice_file)
@@ -151,7 +255,7 @@ if st.button("Run Validation"):
         st.success("Validation Complete")
 
         # -----------------------------
-        # OUTPUT UI
+        # SUMMARY
         # -----------------------------
         st.subheader("📊 Summary")
         st.write(report["summary"])
@@ -161,15 +265,32 @@ if st.button("Run Validation"):
         col2.metric("Matched", report["matched_fields"])
         col3.metric("Mismatched", report["mismatched_fields"])
 
+        # -----------------------------
+        # FIELD VALIDATION (COLOR UI)
+        # -----------------------------
         st.subheader("🔍 Field-wise Validation")
 
         for item in report["field_validation"]:
             if item["status"] == "MATCH":
-                st.success(f"✔ {item['field']}")
+                st.success(f"🟢 ✔ {item['field']}")
             else:
-                st.error(f"✖ {item['field']}")
+                st.error(f"🔴 ✖ {item['field']}")
 
             st.write("Invoice:", item["invoice_value"])
             st.write("Packing:", item["packing_list_value"])
             st.write("Reason:", item["reason"])
             st.divider()
+
+        # -----------------------------
+        # DOWNLOAD JSON REPORT
+        # -----------------------------
+        st.subheader("⬇ Download Report")
+
+        json_data = json.dumps(report, indent=4)
+
+        st.download_button(
+            label="Download JSON Report",
+            data=json_data,
+            file_name="validation_report.json",
+            mime="application/json"
+        )
