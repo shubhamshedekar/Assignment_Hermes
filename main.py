@@ -13,7 +13,12 @@ from groq import Groq
 st.set_page_config(page_title="Document Validator", layout="wide")
 
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-ocr = PaddleOCR(use_angle_cls=True, lang="en")
+# ocr = PaddleOCR(use_angle_cls=True, lang="en")
+
+# Add this instead:
+@st.cache_resource
+def load_ocr():
+    return PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
 
 
 # -----------------------------
@@ -40,15 +45,33 @@ def convert_pdf_to_image(pdf_file):
 # -----------------------------
 # IMAGE -> TEXT
 # -----------------------------
+# def img_to_text(img):
+#     try:
+#         img_np = np.array(img)
+#         result = ocr.ocr(img_np)
+
+#         all_text = []
+#         for block in result:
+#             for line in block:
+#                 all_text.append(line[1][0])
+
+#         return " ".join(all_text)
+
+#     except Exception as e:
+#         st.error(f"OCR error: {e}")
+#         return None
+
 def img_to_text(img):
     try:
+        ocr = load_ocr()  # gets cached instance
         img_np = np.array(img)
         result = ocr.ocr(img_np)
 
         all_text = []
         for block in result:
-            for line in block:
-                all_text.append(line[1][0])
+            if block:  # guard against None blocks
+                for line in block:
+                    all_text.append(line[1][0])
 
         return " ".join(all_text)
 
